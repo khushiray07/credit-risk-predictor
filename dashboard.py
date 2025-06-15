@@ -6,7 +6,7 @@ import seaborn as sns
 
 st.set_page_config(page_title="Credit Risk Dashboard", layout="centered")
 
-API_URL = "http://127.0.0.1:8000"
+API_URL = "https://credit-risk-predictor-h2hs.onrender.com"
 
 st.title("💳 Credit Risk Predictor")
 st.markdown("Check user's **probability of default** using their ID or Email.")
