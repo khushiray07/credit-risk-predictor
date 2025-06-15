@@ -1,17 +1,28 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 import pandas as pd
 import joblib
-from fastapi.responses import FileResponse
 import os
 from datetime import datetime, timedelta
 
 app = FastAPI()
 
-# Load dataset and trained model
-df = pd.read_csv("data.csv")
-model = joblib.load("credit_model.pkl")
+CSV_PATH = "data.csv"
+MODEL_PATH = "credit_model.pkl"
+EXPORT_PATH = "predictions.csv"
+CSV_EXPIRY_MINUTES = 10
 
-# Precompute and add probability column once
+# Load dataset and model safely
+if not os.path.exists(CSV_PATH):
+    raise FileNotFoundError(f"'{CSV_PATH}' not found. Please upload it to your Render repo.")
+
+if not os.path.exists(MODEL_PATH):
+    raise FileNotFoundError(f"'{MODEL_PATH}' not found. Please upload it to your Render repo.")
+
+df = pd.read_csv(CSV_PATH)
+model = joblib.load(MODEL_PATH)
+
+# Compute probability of default
 def calculate_default_prob(row):
     features = [[
         row["social_score"],
@@ -23,10 +34,6 @@ def calculate_default_prob(row):
 
 df["probability_of_default"] = df.apply(calculate_default_prob, axis=1)
 
-# CSV cache config
-CSV_PATH = "predictions.csv"
-CSV_EXPIRY_MINUTES = 10  # Refresh every 10 minutes
-
 @app.get("/")
 def home():
     return {"message": "🚀 Credit Risk API is live!"}
@@ -35,10 +42,9 @@ def home():
 def predict(user_id: int):
     user = df[df["user_id"] == user_id]
     if user.empty:
-        return {"error": "User not found"}
-
+        raise HTTPException(status_code=404, detail="User not found")
+    
     probability = user["probability_of_default"].values[0]
-
     return {
         "user_id": int(user["user_id"]),
         "name": user["name"].values[0],
@@ -50,7 +56,7 @@ def predict(user_id: int):
 def search_user(email: str):
     user = df[df["email"] == email]
     if user.empty:
-        return {"error": "User not found"}
+        raise HTTPException(status_code=404, detail="User not found")
     
     return user.to_dict(orient="records")[0]
 
@@ -59,7 +65,7 @@ def risk_distribution():
     low = sum(df["probability_of_default"] < 0.3)
     medium = sum((df["probability_of_default"] >= 0.3) & (df["probability_of_default"] < 0.7))
     high = sum(df["probability_of_default"] >= 0.7)
-
+    
     return {
         "low_risk_users": int(low),
         "medium_risk_users": int(medium),
@@ -72,22 +78,22 @@ def all_users_risk():
 
 @app.get("/export-predictions")
 def export_predictions():
-    # Use cached file if fresh
-    if os.path.exists(CSV_PATH):
-        modified_time = datetime.fromtimestamp(os.path.getmtime(CSV_PATH))
+    # Use cached file if it's fresh
+    if os.path.exists(EXPORT_PATH):
+        modified_time = datetime.fromtimestamp(os.path.getmtime(EXPORT_PATH))
         if datetime.now() - modified_time < timedelta(minutes=CSV_EXPIRY_MINUTES):
             return FileResponse(
-                path=CSV_PATH,
+                path=EXPORT_PATH,
                 media_type='text/csv',
                 filename="credit_predictions.csv"
             )
 
-    # Regenerate if file is old or missing
+    # Recreate the CSV if old or missing
     export_df = df[["user_id", "name", "email", "probability_of_default", "is_defaulter"]]
-    export_df.to_csv(CSV_PATH, index=False)
-
+    export_df.to_csv(EXPORT_PATH, index=False)
+    
     return FileResponse(
-        path=CSV_PATH,
+        path=EXPORT_PATH,
         media_type='text/csv',
         filename="credit_predictions.csv"
     )
